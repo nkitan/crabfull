@@ -108,8 +108,13 @@ impl App for LogViewerApp {
                     "Regex"
                 ));
                 
+                // Handle regex toggle
+                if regex_response.clicked() {
+                    self.use_regex = !self.use_regex;
+                }
+                
                 // Update search when query changes or regex mode toggles
-                if search_response.changed() || regex_response.changed() {
+                if search_response.changed() || regex_response.clicked() {
                     self.search.update_search(self.search.query.clone(), self.use_regex);
                 }
 
@@ -225,13 +230,15 @@ impl App for LogViewerApp {
 
                                 ui.vertical(|ui| {
                                     // Up button
-                                    if ui.add_sized(small_btn_size, egui::Button::new(format!("▲ {}", label))).clicked() {
+                                    if ui.add_sized(small_btn_size, egui::Button::new(format!("↑ {}", label))).clicked() {
+                                        self.autoscroll = false;
                                         let current_pos = (self.scroll_offset * max_scroll as f32) as usize;
                                         let new_pos = current_pos.saturating_sub(amount);
                                         self.scroll_offset = new_pos as f32 / max_scroll.max(1) as f32;
                                     }
                                     // Down button
-                                    if ui.add_sized(small_btn_size, egui::Button::new(format!("▼ {}", label))).clicked() {
+                                    if ui.add_sized(small_btn_size, egui::Button::new(format!("↓ {}", label))).clicked() {
+                                        self.autoscroll = false;
                                         let current_pos = (self.scroll_offset * max_scroll as f32) as usize;
                                         let new_pos = (current_pos + amount).min(max_scroll);
                                         self.scroll_offset = new_pos as f32 / max_scroll.max(1) as f32;
@@ -295,19 +302,64 @@ impl App for LogViewerApp {
                         ui.label(egui::RichText::new(format!("{:>6} │ ", line_num + 1))
                             .monospace());
                         
-                        // Line content with highlighting for matches
-                        let text = if self.search.current_match == Some(line_num) {
-                            egui::RichText::new(line)
-                                .monospace()
-                                .background_color(egui::Color32::from_rgb(100, 100, 0))
-                        } else if self.search.matches.contains(&line_num) {
-                            egui::RichText::new(line)
-                                .monospace()
-                                .background_color(egui::Color32::from_rgb(60, 60, 0))
+                        // Add red indicator for lines with matches
+                        if self.search.matches.contains(&line_num) {
+                            ui.label(egui::RichText::new("•")
+                                .color(egui::Color32::from_rgb(255, 50, 50)));
                         } else {
-                            egui::RichText::new(line).monospace()
-                        };
-                        ui.label(text);
+                            ui.label(" ");
+                        }
+
+                        // Line content with partial highlighting for matches
+                        if !self.search.query.is_empty() {
+                            if let Some(re) = &self.search.regex {
+                                let mut last_end = 0;
+                                let mut fragments = Vec::new();
+                                
+                                // Find all matches and create text fragments
+                                for m in re.find_iter(line) {
+                                    // Add non-matching text before this match
+                                    if m.start() > last_end {
+                                        fragments.push(
+                                            egui::RichText::new(&line[last_end..m.start()])
+                                                .monospace()
+                                        );
+                                    }
+                                    // Add the matched text with highlighting
+                                    fragments.push(
+                                        egui::RichText::new(&line[m.start()..m.end()])
+                                            .monospace()
+                                            .background_color(
+                                                if self.search.current_match == Some(line_num) {
+                                                    egui::Color32::from_rgb(100, 100, 0)
+                                                } else {
+                                                    egui::Color32::from_rgb(60, 60, 0)
+                                                }
+                                            )
+                                    );
+                                    last_end = m.end();
+                                }
+                                // Add any remaining text after the last match
+                                if last_end < line.len() {
+                                    fragments.push(
+                                        egui::RichText::new(&line[last_end..])
+                                            .monospace()
+                                    );
+                                }
+                                
+                                // Display all fragments in a single horizontal group
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 0.0;  // Remove spacing between fragments
+                                    for fragment in fragments {
+                                        ui.label(fragment);
+                                    }
+                                });
+                            } else {
+                                ui.label(egui::RichText::new(line).monospace());
+                            }
+                        } else {
+                            ui.label(egui::RichText::new(line).monospace());
+                        }
                     });
                 }
 
