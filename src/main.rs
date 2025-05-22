@@ -86,6 +86,7 @@ struct LogViewerApp {
     use_regex: bool,
     autoscroll: bool,
     paused: Arc<Mutex<bool>>,
+    jump_to_line: String,
 }
 
 impl App for LogViewerApp {
@@ -187,6 +188,32 @@ impl App for LogViewerApp {
 
                     ui.group(|ui| {
                         ui.horizontal(|ui| {
+                            // Jump to specific line control
+                            ui.label("Line:");
+                            let response = ui.add_sized(
+                                egui::vec2(60.0, 24.0),
+                                egui::TextEdit::singleline(&mut self.jump_to_line)
+                                    .hint_text("number")
+                            );
+                            if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                if let Ok(line_num) = self.jump_to_line.parse::<usize>() {
+                                    if line_num > 0 && line_num <= total_lines {
+                                        self.scroll_offset = ((line_num - 1) as f32) / max_scroll.max(1) as f32;
+                                        self.jump_to_line.clear();
+                                    }
+                                }
+                            }
+                            
+                            // Bottom jump button
+                            if ui.add_sized(egui::vec2(80.0, 24.0), egui::Button::new("Bottom")).clicked() {
+                                self.autoscroll = false;
+                                self.scroll_offset = 1.0;
+                            }
+
+                            ui.add_space(8.0);
+                            ui.separator();
+                            ui.add_space(8.0);
+
                             ui.label("Jump:");
                             for &amount in &[100, 1000, 10000] {
                                 let label = match amount {
@@ -353,6 +380,7 @@ fn main() -> eframe::Result<()> {
         use_regex: false,
         autoscroll: true,
         paused: paused,
+        jump_to_line: String::new(),
     };
 
     eframe::run_native(
