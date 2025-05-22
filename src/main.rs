@@ -122,9 +122,9 @@ impl App for LogViewerApp {
                     ui.add_space(8.0);
                     // Navigation buttons with fixed width
                     let btn_size = egui::vec2(30.0, 24.0);
-                    let prev_btn = ui.add_sized(btn_size, egui::Button::new("▲"));
+                    let prev_btn = ui.add_sized(btn_size, egui::Button::new("⬆"));
                     ui.add_space(2.0);
-                    let next_btn = ui.add_sized(btn_size, egui::Button::new("▼"));
+                    let next_btn = ui.add_sized(btn_size, egui::Button::new("⬇"));
                     ui.add_space(8.0);
 
                     // Handle search navigation
@@ -230,14 +230,14 @@ impl App for LogViewerApp {
 
                                 ui.vertical(|ui| {
                                     // Up button
-                                    if ui.add_sized(small_btn_size, egui::Button::new(format!("↑ {}", label))).clicked() {
+                                    if ui.add_sized(small_btn_size, egui::Button::new(format!("⬆ {}", label))).clicked() {
                                         self.autoscroll = false;
                                         let current_pos = (self.scroll_offset * max_scroll as f32) as usize;
                                         let new_pos = current_pos.saturating_sub(amount);
                                         self.scroll_offset = new_pos as f32 / max_scroll.max(1) as f32;
                                     }
                                     // Down button
-                                    if ui.add_sized(small_btn_size, egui::Button::new(format!("↓ {}", label))).clicked() {
+                                    if ui.add_sized(small_btn_size, egui::Button::new(format!("⬇ {}", label))).clicked() {
                                         self.autoscroll = false;
                                         let current_pos = (self.scroll_offset * max_scroll as f32) as usize;
                                         let new_pos = (current_pos + amount).min(max_scroll);
