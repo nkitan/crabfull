@@ -85,144 +85,216 @@ struct LogViewerApp {
     search: SearchState,
     use_regex: bool,
     autoscroll: bool,
+    paused: Arc<Mutex<bool>>,
 }
 
 impl App for LogViewerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
         ctx.request_repaint();
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Log Output");
-            
-            // Add search controls and options
+        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+            ui.add_space(4.0);
             ui.horizontal(|ui| {
-                let search_response = ui.text_edit_singleline(&mut self.search.query);
-                let regex_response = ui.toggle_value(&mut self.use_regex, "Regex");
-                ui.toggle_value(&mut self.autoscroll, "Auto-scroll");
+                // Search box with flex grow
+                let search_edit = egui::TextEdit::singleline(&mut self.search.query)
+                    .desired_width(ui.available_width() - 280.0) // Reserve space for buttons
+                    .hint_text("Search logs...");
+                let search_response = ui.add(search_edit);
+
+                ui.add_space(8.0);
+                let regex_response = ui.add(egui::SelectableLabel::new(
+                    self.use_regex,
+                    "Regex"
+                ));
                 
                 // Update search when query changes or regex mode toggles
                 if search_response.changed() || regex_response.changed() {
                     self.search.update_search(self.search.query.clone(), self.use_regex);
                 }
-                
+
                 if !self.search.query.is_empty() {
-                    // Keep a reference to current matches for navigation
+                    ui.add_space(8.0);
+                    // Navigation buttons with fixed width
+                    let btn_size = egui::vec2(30.0, 24.0);
+                    let prev_btn = ui.add_sized(btn_size, egui::Button::new("▲"));
+                    ui.add_space(2.0);
+                    let next_btn = ui.add_sized(btn_size, egui::Button::new("▼"));
+                    ui.add_space(8.0);
+
+                    // Handle search navigation
                     let mut matches = self.search.matches.clone();
                     matches.sort_unstable();
                     
-                    if ui.button("▲").clicked() {
+                    if prev_btn.clicked() {
                         if let Some(current) = self.search.current_match {
                             if let Some(&prev) = matches.iter().rev().find(|&&i| i < current) {
                                 self.search.current_match = Some(prev);
                                 self.scroll_offset = prev as f32 / self.log_buffer.lock().unwrap().total_lines() as f32;
                             }
                         } else if !matches.is_empty() {
-                            // If no current match, go to last match
                             let last = *matches.last().unwrap();
                             self.search.current_match = Some(last);
                             self.scroll_offset = last as f32 / self.log_buffer.lock().unwrap().total_lines() as f32;
                         }
                     }
                     
-                    if ui.button("▼").clicked() {
+                    if next_btn.clicked() {
                         if let Some(current) = self.search.current_match {
                             if let Some(&next) = matches.iter().find(|&&i| i > current) {
                                 self.search.current_match = Some(next);
                                 self.scroll_offset = next as f32 / self.log_buffer.lock().unwrap().total_lines() as f32;
                             }
                         } else if !matches.is_empty() {
-                            // If no current match, go to first match
                             let first = *matches.first().unwrap();
                             self.search.current_match = Some(first);
                             self.scroll_offset = first as f32 / self.log_buffer.lock().unwrap().total_lines() as f32;
                         }
                     }
-                    ui.label(format!("{} matches", matches.len()));
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(format!("{} matches", matches.len()));
+                    });
                 }
             });
-            
-            let available_size = ui.available_size();
-            
+            ui.add_space(4.0);
+        });
+
+        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    let btn_size = egui::vec2(120.0, 28.0);
+                    let small_btn_size = egui::vec2(80.0, 28.0);
+                    
+                    // File reading control
+                    let mut is_paused = *self.paused.lock().unwrap();
+                    if ui.add_sized(btn_size, egui::Button::new(
+                        if is_paused { "▶ Resume Reading" } else { "⏸ Pause Reading" }
+                    )).clicked() {
+                        is_paused = !is_paused;
+                        *self.paused.lock().unwrap() = is_paused;
+                    }
+
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+
+                    // Scroll controls
+                    let buffer = self.log_buffer.lock().unwrap();
+                    let total_lines = buffer.total_lines();
+                    let max_scroll = total_lines.saturating_sub(self.visible_lines_count);
+                    drop(buffer);
+
+                    ui.group(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("Jump:");
+                            for &amount in &[100, 1000, 10000] {
+                                let label = match amount {
+                                    100 => "100",
+                                    1000 => "1K",
+                                    10000 => "10K",
+                                    _ => unreachable!(),
+                                };
+
+                                ui.vertical(|ui| {
+                                    // Up button
+                                    if ui.add_sized(small_btn_size, egui::Button::new(format!("▲ {}", label))).clicked() {
+                                        let current_pos = (self.scroll_offset * max_scroll as f32) as usize;
+                                        let new_pos = current_pos.saturating_sub(amount);
+                                        self.scroll_offset = new_pos as f32 / max_scroll.max(1) as f32;
+                                    }
+                                    // Down button
+                                    if ui.add_sized(small_btn_size, egui::Button::new(format!("▼ {}", label))).clicked() {
+                                        let current_pos = (self.scroll_offset * max_scroll as f32) as usize;
+                                        let new_pos = (current_pos + amount).min(max_scroll);
+                                        self.scroll_offset = new_pos as f32 / max_scroll.max(1) as f32;
+                                    }
+                                });
+                                ui.add_space(4.0);
+                            }
+                        });
+                    });
+
+                    ui.add_space(16.0);
+                    if is_paused {
+                        ui.label("File reading paused");
+                    }
+                });
+            });
+            ui.add_space(4.0);
+        });
+
+        egui::CentralPanel::default().show(ctx, |ui| {
             // Calculate visible lines based on UI height and text size
             let text_height = ui.text_style_height(&egui::TextStyle::Monospace);
-            self.visible_lines_count = (available_size.y / text_height) as usize;
+            self.visible_lines_count = (ui.available_height() / text_height) as usize;
 
             let scroll_area = egui::ScrollArea::vertical()
                 .max_height(f32::INFINITY)
                 .auto_shrink([false; 2]);
 
             scroll_area.show(ui, |ui| {
-                    let buffer = self.log_buffer.lock().unwrap();
-                    let total_lines = buffer.total_lines();
-                    
-                    // Calculate visible range based on scroll position
-                    let max_scroll = total_lines.saturating_sub(self.visible_lines_count);
-                    let current_pos = if self.autoscroll {
-                        max_scroll  // When auto-scroll is on, always show the bottom
-                    } else {
-                        (self.scroll_offset * max_scroll as f32) as usize
-                    };
-                    
-                    // Calculate window of lines to display
-                    let start_line = current_pos;
-                    let end_line = start_line + self.visible_lines_count;
-                    let visible_lines = buffer.get_window(start_line, end_line);
-                    
-                    // First pass: collect matches
-                    if !self.search.query.is_empty() {
-                        self.search.matches.clear();
-                        for (line_num, line) in visible_lines.iter() {
-                            if self.search.matches_pattern(line) {
-                                self.search.matches.push(*line_num);
-                            }
-                        }
-                        self.search.matches.sort_unstable();
-                    }
-
-                    // Second pass: display lines with highlighting
-                    for (line_num, line) in visible_lines {
-                        ui.horizontal(|ui| {
-                            // Line number with monospace formatting
-                            ui.label(egui::RichText::new(format!("{:>6} │ ", line_num + 1))
-                                .monospace());
-                            
-                            // Line content with highlighting for matches
-                            let text = if self.search.current_match == Some(line_num) {
-                                egui::RichText::new(line)
-                                    .monospace()
-                                    .background_color(egui::Color32::from_rgb(100, 100, 0))
-                            } else if self.search.matches.contains(&line_num) {
-                                egui::RichText::new(line)
-                                    .monospace()
-                                    .background_color(egui::Color32::from_rgb(60, 60, 0))
-                            } else {
-                                egui::RichText::new(line).monospace()
-                            };
-                            ui.label(text);
-                        });
-                    }
-
-                    // Handle scrolling
-                    let scroll_delta = ui.input(|i| i.raw_scroll_delta.y);
-                    if scroll_delta != 0.0 {
-                        self.autoscroll = false;  // Disable auto-scroll when user scrolls
-                        let line_delta = scroll_delta / text_height;
-                        let normalized_delta = line_delta / max_scroll.max(1) as f32;
-                        self.scroll_offset = (self.scroll_offset - normalized_delta).clamp(0.0, 1.0);
-                    }
-
-                    ui.allocate_rect(ui.available_rect_before_wrap(), egui::Sense::hover());
-                });
-
-                // Add control panel at bottom
-                ui.horizontal(|ui| {
-                    if ui.button(if self.autoscroll { "⏸ Pause" } else { "▶ Resume" }).clicked() {
-                        self.autoscroll = !self.autoscroll;
-                        if self.autoscroll {
-                            self.scroll_offset = 1.0;  // Jump to bottom when resuming
+                let buffer = self.log_buffer.lock().unwrap();
+                let total_lines = buffer.total_lines();
+                
+                // Calculate visible range based on scroll position
+                let max_scroll = total_lines.saturating_sub(self.visible_lines_count);
+                let current_pos = if self.autoscroll {
+                    max_scroll
+                } else {
+                    (self.scroll_offset * max_scroll as f32) as usize
+                };
+                
+                // Calculate window of lines to display
+                let start_line = current_pos;
+                let end_line = start_line + self.visible_lines_count;
+                let visible_lines = buffer.get_window(start_line, end_line);
+                
+                // First pass: collect matches
+                if !self.search.query.is_empty() {
+                    self.search.matches.clear();
+                    for (line_num, line) in visible_lines.iter() {
+                        if self.search.matches_pattern(line) {
+                            self.search.matches.push(*line_num);
                         }
                     }
-                });
+                    self.search.matches.sort_unstable();
+                }
+
+                // Second pass: display lines with highlighting
+                for (line_num, line) in visible_lines {
+                    ui.horizontal(|ui| {
+                        // Line number with monospace formatting
+                        ui.label(egui::RichText::new(format!("{:>6} │ ", line_num + 1))
+                            .monospace());
+                        
+                        // Line content with highlighting for matches
+                        let text = if self.search.current_match == Some(line_num) {
+                            egui::RichText::new(line)
+                                .monospace()
+                                .background_color(egui::Color32::from_rgb(100, 100, 0))
+                        } else if self.search.matches.contains(&line_num) {
+                            egui::RichText::new(line)
+                                .monospace()
+                                .background_color(egui::Color32::from_rgb(60, 60, 0))
+                        } else {
+                            egui::RichText::new(line).monospace()
+                        };
+                        ui.label(text);
+                    });
+                }
+
+                // Handle scrolling
+                let scroll_delta = ui.input(|i| i.raw_scroll_delta.y);
+                if scroll_delta != 0.0 {
+                    self.autoscroll = false;
+                    let line_delta = scroll_delta / text_height;
+                    let normalized_delta = line_delta / max_scroll.max(1) as f32;
+                    self.scroll_offset = (self.scroll_offset - normalized_delta).clamp(0.0, 1.0);
+                }
+
+                ui.allocate_rect(ui.available_rect_before_wrap(), egui::Sense::hover());
+            });
         });
     }
 }
@@ -234,6 +306,8 @@ fn main() -> eframe::Result<()> {
     let log_buffer = Arc::new(Mutex::new(CircularLogBuffer::new(BUFFER_CAPACITY)));
     let log_buffer_clone = log_buffer.clone();
     let log_path = "log.txt".to_string();
+    let paused = Arc::new(Mutex::new(false));
+    let paused_clone = paused.clone();
 
     thread::spawn(move || {
         let file = File::open(&log_path).unwrap_or_else(|_| File::create(&log_path).unwrap());
@@ -241,6 +315,12 @@ fn main() -> eframe::Result<()> {
         let mut line = String::new();
         
         loop {
+            // Check if paused
+            if *paused_clone.lock().unwrap() {
+                thread::sleep(Duration::from_millis(100));
+                continue;
+            }
+
             match reader.read_line(&mut line) {
                 Ok(0) => {
                     thread::sleep(Duration::from_millis(10));
@@ -272,6 +352,7 @@ fn main() -> eframe::Result<()> {
         search: SearchState::default(),
         use_regex: false,
         autoscroll: true,
+        paused: paused,
     };
 
     eframe::run_native(
